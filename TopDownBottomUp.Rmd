@@ -1,0 +1,356 @@
+---
+title: "Analysis code for Top-down versus bottom-up theories of phonological
+           acquisition: A big data approach"
+author: "Christina Bergmann, Sho Tsuji, Alejandrina Cristia"
+output:
+  pdf_document: default
+---
+  
+# Introduction
+
+This document provides the analysis code for the Interspeech 2017 paper "Top-down versus bottom-up theories of phonological acquisition: A big data approach". 
+
+
+
+
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, cache = TRUE)
+#ggplot2::theme_set(langcog::theme_mikabr(base_family = "Ubuntu"))
+#source("C:/Users/Sho/Documents/GitHub/metalab - Copy/dashboard/global.R", chdir = TRUE)
+library(metafor)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(purrr)
+library(langcog)
+```
+
+```{r FigureTemplate, include = FALSE}
+#colors InPhondbp "skyblue" "darkblue"? InWorddbp "indianred"?
+#Source for names: https://www.w3schools.com/colors/colors_hex.asp
+
+
+apatheme=theme_bw()+
+  theme(#panel.grid.major=element_blank(),
+        #panel.grid.minor=element_blank(),
+        panel.border=element_blank(),
+        axis.line=element_line(),
+        text=element_text(family='Times'),
+        legend.position='none')
+```
+
+
+```{r ReadInPhonDB, include = FALSE}
+#This file has been extracted from metalab
+dbp<-read.table("data/inphon.txt",sep="/")
+
+dbp <- dbp %>%
+  mutate(age.C = (mean_age_1-mean(mean_age_1, na.rm=TRUE))/30.42)
+```
+
+
+
+```{r ReadInWordDB, include = FALSE}
+#Get the data based on the most recent spreadsheet, as metalab data is missing some information
+source("scripts/calculateES.R")
+
+```
+
+
+
+```{r PrepInPhonDB, include = FALSE}
+
+#N infants
+dbp$n<-rowSums( cbind (dbp$n_1,dbp$n_2), na.rm=TRUE)
+temp<-aggregate(n~same_infant,dbp,mean)
+sum(temp$n)
+
+#code moderators
+dbp$exposure_phase<-factor(dbp$exposure_phase)
+contrasts(dbp$exposure_phase)=contr.sum(4) 
+dbp$same_infant<-factor(dbp$same_infant)
+
+
+#Note where multiple age groups were tested in the same experiment
+dbp$levels<-paste(dbp$study_ID,dbp$native_lang,dbp$infant_type,dbp$contrast_sampa)
+dbp$subset<-NA
+for(eachunique in levels(factor(dbp$levels))){
+  subset(dbp, levels==eachunique)->nowdoing
+  dbp$subset[dbp$levels==eachunique]<-ifelse(length(levels(factor(unlist(nowdoing[,"mean_age_1"]))))>1,T,F) 
+}
+
+dbp$weights_g <-  1/(dbp$g_var_calc)^2
+```
+
+```{r PrepInWordDB, include = FALSE}
+
+db <- db %>%
+  mutate(age.C = (mean_age_1-mean(mean_age_1, na.rm=TRUE))/30.42)
+```
+
+Read-in and preprocessing steps can be found in the R Markdown document. 
+
+# Analyses
+
+## All data
+
+### Vowel acquisition
+
+```{r AnalysisAllInPhonDB}
+
+native.full<-rma.mv(g_calc, g_var_calc, mods=~ age.C + exposure_phase,random = ~ same_infant| short_cite, data=dbp[dbp$test_lang=="native",], weighted=TRUE)
+summary(native.full)
+
+nonnative.full<-rma.mv(g_calc, g_var_calc, mods=~ age.C + exposure_phase,random = ~ same_infant | short_cite, data=dbp[dbp$test_lang=="nonnative",], weighted=TRUE)
+summary(nonnative.full)
+```
+
+
+
+```{r PlotAllInPhonDB, echo = FALSE}
+#Create models without age centered for plotting purposes
+nonnative.full.ageplot<-rma.mv(g_calc, g_var_calc, mods=~ mean_age_1 + exposure_phase,random = ~ same_infant | short_cite, data=dbp[dbp$test_lang=="nonnative",], weighted=TRUE)
+
+native.full.ageplot<-rma.mv(g_calc, g_var_calc, mods=~ mean_age_1 + exposure_phase,random = ~ same_infant| short_cite, data=dbp[dbp$test_lang=="native",], weighted=TRUE)
+
+
+full = ggplot(dbp, aes(x = mean_age_1, y = g_calc, col = test_lang))
+full + geom_point(aes(size = 1/g_var_calc), alpha = .5) + 
+  geom_line(y= 0, linetype="dotted") + 
+  geom_abline(intercept = native.full.ageplot$b[1], slope = native.full.ageplot$b[2],col="skyblue",size=1.5)+
+  geom_abline(intercept = nonnative.full.ageplot$b[1], slope = nonnative.full.ageplot$b[2],col="darkblue",size=1.5)+
+  xlab("Age in months") + 
+  ylab("Effect size Hedges' g") +
+  scale_color_manual(values=c("skyblue","darkblue")) + 
+  #scale_x_continuous(0, 17) + #adapt to cover both age ranges, max age in months for InWorddbp = 16.55
+  apatheme +
+  theme(text = element_text(size=16)) 
+```
+
+
+## Word Segmentation
+
+
+```{r AnalysisAllInWordDB}
+rma_age = rma.mv(g_calc, g_var_calc, mods = age.C,data = db, random =  ~ same_infant | short_cite)
+
+summary(rma_age)
+```
+
+
+```{r PlotAllInWordDB, echo = FALSE}
+
+rma_age_plot = rma.mv(g_calc, g_var_calc, data = db, mod = mean_age_1, random =  ~ same_infant | short_cite) 
+
+p = ggplot(db, aes(mean_age_1, g_calc)) +
+  geom_point(aes(size = weights_g), alpha = .5, colour = "indianred") + 
+  geom_line(y= 0, linetype="dotted") + 
+  geom_abline(intercept = rma_age_plot$b[1], slope = rma_age_plot$b[2], size=1.5, colour = "indianred") +
+  xlab("Age in months") + 
+  ylab("Effect size Hedges' g") +
+  scale_x_continuous(limits = c(5*30.42,17*30.42), 
+                     breaks = c(5*30.42, 7.5*30.42, 10*30.42, 12.5*30.42, 15*30.42), 
+                     labels = c("5","7.5","10","12.5","15")) + 
+  theme_bw() +
+  apatheme 
+
+p
+  
+```
+
+
+
+## Only use data testing at least two age groups on same contrast
+
+### Vowels 
+
+Since nonnative model did not converge, dropping same_infant here! (Significant effect of age remains for both model with or without same_infant). 
+
+```{r AnalysisSubsetVowels}
+
+native.sub<-rma.mv(g_calc, g_var_calc, mods=~ age.C + exposure_phase,random = ~ same_infant | short_cite, data=dbp[dbp$test_lang=="native",], weighted=TRUE,subset=c(subset))
+summary(native.sub)
+
+nonnative.sub<-rma.mv(g_calc, g_var_calc, mods=~ age.C + exposure_phase,random = ~ 1 | short_cite, data=dbp[dbp$test_lang=="nonnative",], weighted=TRUE,subset=c(subset))
+summary(nonnative.sub)
+```
+
+
+```{r PlotSubsetVowels, echo = FALSE}
+native.sub.ageplot<-rma.mv(g_calc, g_var_calc, mods=~ mean_age_1 + exposure_phase,random = ~ 1 | short_cite/same_infant, data=dbp[dbp$test_lang=="native",], weighted=TRUE,subset=c(subset))
+
+nonnative.sub.ageplot<-rma.mv(g_calc, g_var_calc, mods=~ mean_age_1 + exposure_phase,random = ~ 1 | short_cite/same_infant, data=dbp[dbp$test_lang=="nonnative",], weighted=TRUE,subset=c(subset))
+
+sub = ggplot(dbp[dbp$subset==T,], aes(x = mean_age_1, y = g_calc, col = test_lang))
+sub + geom_point(aes(size = 1/g_var_calc), alpha = .5) + 
+  geom_line(y= 0, linetype="dotted") + 
+  geom_abline(intercept = native.sub.ageplot$b[1], slope = native.sub.ageplot$b[2],col="skyblue",size=1.5)+
+  geom_abline(intercept = nonnative.sub.ageplot$b[1], slope = nonnative.sub.ageplot$b[2],col="darkblue",size=1.5)+
+  xlab("Age in months") + 
+  ylab("Effect size Hedges' g") +
+  scale_color_manual(values=c("skyblue","darkblue")) + 
+  scale_x_continuous(limits = c(0,17*30.42), 
+                     breaks = c(0*30.42, 2.5*30.42,5*30.42, 7.5*30.42, 10*30.42, 12.5*30.42, 15*30.42), 
+                     labels = c("0", "2.5", "5","7.5","10","12.5","15")) + 
+  scale_y_continuous(limits=c(-1,2.5)) +
+  apatheme +
+  theme(text = element_text(size=16))
+
+```
+
+### Word Segmentation
+
+
+```{r AnalysisSubsetWords}
+db_multiple = db %>%
+  filter(multiple_age_groups == 1)
+
+rma_age_m = rma.mv(g_calc, g_var_calc, data = db_multiple, mod = age.C, random =  ~ same_infant | short_cite)
+
+summary(rma_age_m) 
+```
+
+```{r PlotSubsetInWordDB, echo = FALSE}
+
+rma_age_plot_m = rma.mv(g_calc, g_var_calc, data = db_multiple, mod = mean_age_1, random =  ~ same_infant | short_cite) 
+
+p = ggplot(db, aes(mean_age_1, g_calc)) +
+  geom_point(aes(size = weights_g), alpha = .5, colour = "indianred") + 
+  geom_line(y= 0, linetype="dotted") + 
+  geom_abline(intercept = rma_age_plot_m$b[1], slope = rma_age_plot_m$b[2], size=1.5, colour = "indianred") +
+  xlab("Age in months") + 
+  ylab("Effect size Hedges' g") +
+  scale_x_continuous(limits = c(5*30.42,17*30.42), 
+                     breaks = c(5*30.42, 7.5*30.42, 10*30.42, 12.5*30.42, 15*30.42), 
+                     labels = c("5","7.5","10","12.5","15")) + 
+  theme_bw() +
+  apatheme 
+
+p
+  
+```
+
+### Joint figure
+
+```{r JointFigPrep, include=FALSE}
+native = dbp[dbp$subset==T&dbp$test_lang=="native",]
+nonnative = dbp[dbp$subset==T&dbp$test_lang=="nonnative",]
+
+db_multiple$Dataset = "WordSeg"
+native$Dataset = "Vowels-Native"
+nonnative$Dataset = "Vowels-Nonnative"
+
+inworddb = db_multiple %>%
+  select(c(mean_age_1, g_calc, weights_g, Dataset))
+
+alldat = full_join(native, nonnative) %>%
+  select(c(mean_age_1, g_calc, weights_g, Dataset)) %>%
+  full_join(inworddb)
+
+```
+
+
+```{r PlotJointFigure, echo = FALSE}
+
+
+sub = ggplot(alldat, aes(x = mean_age_1, y = g_calc, colour = Dataset, linetype = Dataset)) +
+  geom_point(aes(size = weights_g), alpha = 1/3,show.legend = FALSE) +
+  geom_line(y= 0, linetype="dotted") + 
+  geom_abline(intercept = nonnative.sub.ageplot$b[1], slope = nonnative.sub.ageplot$b[2],col="darkblue",size=1.5)+
+  geom_abline(intercept = native.sub.ageplot$b[1], slope = native.sub.ageplot$b[2],col="cornflowerblue",size=1.5)+
+  geom_abline(intercept = rma_age_plot_m$b[1], slope = rma_age_plot_m$b[2], size=1.5, colour = "indianred") +
+  scale_color_manual(values=c("cornflowerblue","darkblue","indianred")) + 
+  xlab("Age in months") + 
+  ylab("Effect size Hedges' g") +
+  scale_x_continuous(limits = c(0,17*30.42), 
+                     breaks = c(0*30.42, 2.5*30.42,5*30.42, 7.5*30.42, 10*30.42, 12.5*30.42, 15*30.42,17.5*30.42), 
+                     labels = c("0", "2.5", "5","7.5","10","12.5","15","17.5")) + 
+  scale_y_continuous(limits=c(-1.1,1.5)) +
+  apatheme +
+  theme(text = element_text(size=16),
+        legend.position = "bottom",
+        legend.key = element_blank(),
+        legend.background = element_rect(fill = "transparent")
+        )
+
+sub
+
+ggsave("figures/AgeEffectSize.jpg", sub)
+ggsave("figures/AgeEffectSize.pdf", sub)
+```
+
+```{r PrepCI, include=FALSE}
+
+#confidence lines
+pr.native<-as.data.frame(print.list.rma(predict(native.sub.ageplot)))
+pr.native$age <- dbp$mean_age_1[dbp$test_lang=="native"&dbp$subset==T]
+
+pr.nonnative<-as.data.frame(print.list.rma(predict(nonnative.sub.ageplot)))
+pr.nonnative$age <- dbp$mean_age_1[dbp$test_lang=="nonnative"&dbp$subset==T]
+
+pr.words<-as.data.frame(print.list.rma(predict(rma_age_plot_m)))
+pr.words$age <- db_multiple$mean_age_1
+
+
+
+```
+
+
+```{r PlotJointFigureCI, echo = FALSE}
+
+
+sub = ggplot(alldat, aes(x = mean_age_1, y = g_calc)) +
+  #geom_point(aes(size = weights_g), alpha = 1/3,show.legend = FALSE) +
+  geom_line(y= 0, linetype="dotted") + 
+  geom_abline(intercept = nonnative.sub.ageplot$b[1], slope = nonnative.sub.ageplot$b[2],col="darkblue",size=1.5)+
+  geom_smooth(data=pr.nonnative,aes(x=age,y=ci.ub), se = FALSE, col="darkblue",size=0.5, method = "lm", formula = y ~ poly(x, 2))+
+  geom_smooth(data=pr.nonnative,aes(x=age,y=ci.lb), se = FALSE, col="darkblue",size=0.5, method = "lm", formula = y ~ poly(x, 2))+
+  geom_abline(intercept = native.sub.ageplot$b[1], slope = native.sub.ageplot$b[2],col="cornflowerblue",size=1.5)+
+  geom_smooth(data=pr.native,aes(x=age,y=ci.ub), se = FALSE, col="cornflowerblue",size=0.5, method = "lm", formula = y ~ poly(x, 2))+
+  geom_smooth(data=pr.native,aes(x=age,y=ci.lb), se = FALSE, col="cornflowerblue",size=0.5, method = "lm", formula = y ~ poly(x, 2))+
+  geom_abline(intercept = rma_age_plot_m$b[1], slope = rma_age_plot_m$b[2], size=1.5, colour = "indianred") +
+  geom_smooth(data=pr.words,aes(x=age,y=ci.ub), se = FALSE, col="indianred",size=0.5)+
+  geom_smooth(data=pr.words,aes(x=age,y=ci.lb), se = FALSE, col="indianred",size=0.5)+
+  scale_color_manual(values=c("cornflowerblue","darkblue","indianred")) + 
+  xlab("Age in months") + 
+  ylab("Effect size Hedges' g") +
+  scale_x_continuous(limits = c(0,17*30.42), 
+                     breaks = c(0*30.42, 2.5*30.42,5*30.42, 7.5*30.42, 10*30.42, 12.5*30.42, 15*30.42,17.5*30.42), 
+                     labels = c("0", "2.5", "5","7.5","10","12.5","15","17.5")) + 
+  scale_y_continuous(limits=c(-1.1,1.5)) +
+  apatheme +
+  theme(text = element_text(size=16),
+        legend.position = "bottom",
+        legend.key = element_blank(),
+        legend.background = element_rect(fill = "transparent")
+        )
+
+sub
+
+ggsave("figures/AgeEffectSizeCI.jpg", sub)
+ggsave("figures/AgeEffectSizeCI.pdf", sub)
+# 
+# sub = ggplot(db[db$subset==T,], aes(x = mean_age_1, y = g_calc, col = test_lang))
+# sub + 
+#   scale_color_manual(values=c("skyblue","darkblue","skyblue","darkblue")) + 
+#   geom_point(aes(size = 1/g_var_calc), alpha = .5) + 
+#   geom_line(y= 0, linetype="dotted") + 
+#   geom_abline(intercept = native.sub.ageplot$b[1], slope = native.sub.ageplot$b[2],col="skyblue",size=1.5)+
+#   geom_smooth(data=pr.native,aes(x=age,y=ci.lb), error = FALSE)+
+#   geom_line(data=pr.native,aes(x=age,y=ci.ub))+
+#   #line and ribbon give the same results
+#   #geom_ribbon(data=pr.native,aes(x=age,y=pred,ymin=ci.lb,ymax=ci.ub,fill=test_lang,alpha=0.1), stat="identity")+
+#   geom_abline(intercept = nonnative.sub.ageplot$b[1], slope = nonnative.sub.ageplot$b[2],col="darkblue",size=1.5)+
+#   geom_line(data=pr.nonnative,aes(x=age,y=ci.lb))+
+#   geom_line(data=pr.nonnative,aes(x=age,y=ci.ub))+
+#   xlab("Age in months") + 
+#   ylab("Effect size Hedge's g") +
+# 
+#   scale_x_continuous(limits = c(0,17*30.42), 
+#                      breaks = c(0*30.42, 2.5*30.42,5*30.42, 7.5*30.42, 10*30.42, 12.5*30.42, 15*30.42), 
+#                      labels = c("0", "2.5", "5","7.5","10","12.5","15")) + 
+#   apatheme +
+#   theme(text = element_text(size=16))
+```
